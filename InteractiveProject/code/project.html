@@ -5,11 +5,13 @@
 
 attribute vec4 vPosition;
 attribute vec3 vNormal;
+attribute vec2 vTexCoord;
 
-// Output variables to send to the fragment shader
-varying vec3 fN; // Normal in Eye Space
-varying vec3 fE; // Viewer Vector in Eye Space
-varying vec3 fL; // Light Vector in Eye Space
+// these are variables in eye space
+varying vec3 fN;
+varying vec3 fE;
+varying vec3 fL;
+varying vec2 fTexCoord;
 
 uniform mat4 modelViewMatrix;
 uniform mat4 projectionMatrix;
@@ -17,20 +19,20 @@ uniform vec4 lightPosition;
 
 void main()
 {
-    // Transform vertex position to Eye Space
+    // transform vertex position to Eye Space
     vec3 pos = (modelViewMatrix * vPosition).xyz;
     
-    // Calculate vector from Surface to Light
-    // Since lightPosition is (0,0,0), this is just -pos
+    // calc vector from surface to light
     if(lightPosition.w == 0.0) fL = normalize(lightPosition.xyz);
     else fL = normalize(lightPosition.xyz - pos);
 
-    // Calculate vector from Surface to Camera
-    // Since Camera is at (0,0,0) in Eye Space, this is also -pos
+    // vector from surface to camera
     fE = normalize(-pos);
 
-    // Transform Normal to Eye Space
+    // normal to eye space
     fN = normalize((modelViewMatrix * vec4(vNormal, 0.0)).xyz);
+
+    fTexCoord = vTexCoord;
 
     gl_Position = projectionMatrix * modelViewMatrix * vPosition;
 }
@@ -55,12 +57,16 @@ uniform vec4 ambientProduct;
 uniform vec4 diffuseProduct;
 uniform vec4 specularProduct;
 uniform float shininess;
+uniform vec4 uColor;
+
+uniform sampler2D uTextureMap;
+uniform sampler2D uNormalMap;
 
 // Inputs from vertex shader
 varying vec3 fN;
 varying vec3 fL;
 varying vec3 fE;
-uniform vec4 uColor; 
+varying vec2 fTexCoord;
 
 void main()
 {
@@ -68,45 +74,39 @@ void main()
     vec3 E = normalize(fE);
     vec3 L = normalize(fL);
 
-    // --- SPOTLIGHT CONFIGURATION ---
+    vec4 texColor = texture2D(uTextureMap, fTexCoord);
+    vec3 normalSample = texture2D(uNormalMap, fTexCoord).rgb;
+    vec3 perturbedNormal = normalize((normalSample * 2.0) - 1.0);
+
+    float normalStrength = 0.5;
+    vec3 N_final = normalize(mix(N, perturbedNormal, normalStrength));
+
+    // this is for the spotlight config ====
     vec3 spotDir = vec3(0.0, 0.0, -1.0);
     float angle = dot(normalize(-L), spotDir);
-    
-    // 1. OUTER CUTOFF: The absolute edge of the light (keeps your current radius)
-    // 0.90 cosine is approx 25 degrees
+    // outer cutoff
     float outerCutoff = 0.90; 
-    
-    // 2. INNER CUTOFF: Where the "fade" starts. 
-    // Closer to 1.0 = softer, wider fade. Closer to 0.90 = sharper edge.
-    // changed from 0.92 to 0.96 for a much smoother falloff
+    // inner cutoff
     float innerCutoff = 1.0; 
     
-    // 3. CALCULATE FALLOFF
-    // smoothstep returns 0.0 if we are at outerCutoff, and 1.0 if at innerCutoff
-    // It automatically interpolates smoothly in between.
+    // fallot
     float spotFactor = smoothstep(outerCutoff, innerCutoff, angle);
+    // ====
 
-    // --- LIGHTING CALCULATION ---
-    
-    // A. Calculate what the pixel looks like if FULLY LIT
+    // lighting calcs
     vec3 H = normalize(L + E);
-    vec4 ambient = ambientProduct; // You can multiply by uColor if you want colored ambient
+    vec4 ambient = ambientProduct * texColor; // You can multiply by uColor if you want colored ambient
     
-    float Kd = max(dot(L, N), 0.0);
-    vec4 diffuse = Kd * diffuseProduct * uColor;
+    float Kd = max(dot(L, N_final), 0.0);
+    vec4 diffuse = Kd * diffuseProduct * texColor;
 
-    float Ks = pow(max(dot(N, H), 0.0), shininess);
+    float Ks = pow(max(dot(N_final, H), 0.0), shininess);
     vec4 specular = Ks * specularProduct;
-    if (dot(L, N) < 0.0) specular = vec4(0.0, 0.0, 0.0, 1.0);
+    if (dot(L, N_final) < 0.0) specular = vec4(0.0, 0.0, 0.0, 1.0);
     
     vec4 litColor = ambient + diffuse + specular;
-
-    // B. Calculate what the pixel looks like if UNLIT (Darkness)
-    vec4 unlitColor = ambientProduct * uColor * 0.2; // Very dim base ambient
+    vec4 unlitColor = ambientProduct * texColor * 0.2; // Very dim base ambient
     
-    // C. Mix them based on the spotFactor
-    // If spotFactor is 1 (center), we see litColor. 
-    // If spotFactor is 0 (outside), we see unlitColor.
     gl_FragColor = mix(unlitColor, litColor, spotFactor);
     gl_FragColor.a = 1.0;
 }
@@ -122,6 +122,10 @@ void main()
         gl_FragColor = uColor;
     }
 </script>
+
+<p>
+<button id="wireframeToggle">Toggle Wireframe (ON)</button>
+</p>
 
 <script type="text/javascript" src="../Common/webgl-utils.js"></script>
 <script type="text/javascript" src="../Common/initShaders.js"></script>
